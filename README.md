@@ -72,3 +72,4 @@ This library contains the code to communicate with the xTool M1, as well as some
 - X and Y Axis Length: 300mm
 - Origin of Laser: Rear Left
 - Auto home: off
+- **Enable pointer offset: on, X = -29.46mm, Y = 0.49mm**
