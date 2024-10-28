@@ -11,7 +11,7 @@ from PIL import Image
 translator = GcodeTranslator()
 
 #m1 = XTM1()
-m1 = XTM1('192.168.178.125')
+m1 = XTM1('192.168.2.219',"m1_ultra")
 actions = {
     '--status': lambda: m1.get_status(),
     '--stop': lambda: m1.stop(),

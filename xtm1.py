@@ -7,10 +7,11 @@ import time
 import re
 
 class XTM1:
-    def __init__(self, IP='201.234.3.1') -> None:
+    def __init__(self, IP='201.234.3.1', model="m1") -> None:
         self.IP = IP
         self.PORT = 8080
         self.CAMERA_PORT = 8329
+        self.model = model
 
     def get_status(self) -> dict:
         reply = self._get_request(f'/cnc/status').decode('utf-8')
@@ -18,8 +19,11 @@ class XTM1:
 
     def is_idle(self) -> bool:
         status = self.get_status()
-        return status['STATUS'] in ('P_IDLE', 'P_SLEEP', 'P_FINISH')
-
+        if self.model == "m1":
+            return status['STATUS'] in ('P_IDLE', 'P_SLEEP', 'P_FINISH')
+        if self.model == "m1_ultra":
+            return status['mode'] in ('P_IDLE', 'P_SLEEP', 'P_FINISH')
+        
     def stop(self):
         return self._get_request('/cnc/data?action=stop')
 
@@ -27,8 +31,14 @@ class XTM1:
         return self.execute_gcode_command('M18 S255' if on else 'M18 S0')
 
     def measure_thickness(self) -> float:
-        reply = self._get_request('/camera?focus=9007199254740991,9007199254740991,0,0', port=self.CAMERA_PORT)
-        return float(json.loads(reply)['measure'])
+        if self.model == "m1":
+            reply = self._get_request('/camera?focus=9007199254740991,9007199254740991,0,0', port=self.CAMERA_PORT)
+            return float(json.loads(reply)['measure'])
+        if self.model == "m1_ultra":
+            reply = self._post_request('/peripheral/workhead_ZHeight',data=json.dumps({"action":"get"}),headers={'Content-Type':'application/json', 'Accept-Encoding':'application/json, text/plain, */*'})
+            raw_value = float(json.loads(reply)['data']['value'])
+            thickness_value = (raw_value-68)/10 # offset of 6,8mm and 10th of a mm.
+            return thickness_value
 
     def get_camera_image(self) -> bytes:
         return self._get_request('/snap?stream=0', port=self.CAMERA_PORT)
@@ -56,7 +66,7 @@ class XTM1:
             raise NotImplementedError('Only Laser G-code is currently supported, not ' + tool_type)
         self.set_tool_type(tool_type)
 
-        translator = GcodeTranslator()
+        translator = GcodeTranslator(model=self.model)
         if material_thickness == 'auto':
             print('Measuring material thicknes... ', end='')
             material_thickness = self.measure_thickness()
@@ -80,8 +90,7 @@ class XTM1:
     def set_tool_type(self, type='Laser'):
         return self._post_request('/setprintToolType?type=' + type)
 
-    def _post_request(self, url, port=None, **kwargs) -> bytes:
-        headers = { 'Content-Type': 'application/x-www-form-urlencoded' }
+    def _post_request(self, url, port=None, headers={'Content-Type':'application/x-www-form-urlencoded'}, **kwargs) -> bytes:
         if port is None: port = self.PORT
         full_url = f'http://{self.IP}:{port}{url}'
         result = requests.post(full_url, headers=headers, timeout=10, **kwargs)
@@ -169,46 +178,7 @@ class GcodeTranslator():
     down in the M1, and the Z height for correct focus for material thickness zero is
     Z=17. This way, setting the material thickness in LightBurn will be translated into
     the correct Z movement for the M1.
-    """
-
-    START_GCODE = dedent_bytes(b"""
-    ;XTM1_HEADER_START;
-    ; Set default speed for G0 and G1
-    G1 F9600
-    G0 F9600
-    ; Disable all periphery (except air purifyer)
-    M19 S1
-    ; Disable ranging laser pointer
-    M18 S0
-
-    ; Pause before start
-    G4 P0.1
-
-    ; Move to work area
-    G0 Y30
-    ; Activate laser module and set power to 0
-    M4 S0
-    ; Don't know what this does
-    M104 X0
-    ;XTM1_HEADER_END;
-
-    """)
-
-    END_GCODE = dedent_bytes(b"""
-
-    ;XTM1_FOOTER_START;
-    ; Move head to origin
-    G0 Z0 F3000
-    G0 X0 Y0 F9600
-
-    ; Small pause
-    G4 P0.1
-    ; Disable laser module
-    M05
-    ; Stop gcode
-    M6 P1
-    ;XTM1_FOOTER_END;
-    """)
+    """  
 
     allowed_gcodes = {
         b'G0', # Move without firing laser
@@ -235,18 +205,93 @@ class GcodeTranslator():
         b'M114', # Get current position. Emitted by LightBurn when Framing. Not useful because M1 sends no replies to G-code.
         b'G00 G17 G40 G21 G54', # Strange G-code emitted by LightBurn when Framing
         b'LASER_JOB_START', b'LASER_JOB_END', # These are used for Streaming mode by LightBurnAdapter.py
+        b'M2' # Program end
     }
 
 
-    def __init__(self) -> None:
-        self.material_height_zero_z = 17.0 # Actual Z coordinate for a material thickness of 0
-        #self.material_height_zero_z = 19.0 # The real focus height seems a bit lower for my M1. Needs further investigation 
-        self.lowest_z_height = 35.0 # This is to prevent crashing the blade into the bed
+    def __init__(self, model="m1") -> None:
+        self.model = model
         self.force_material_thickness =  None
         self.s_regex = re.compile(rb'(S[0-9]*)\.[0-9]+')
         self.z_regex = re.compile(rb'^(G0?[0123].*?Z)([-0-9]*(\.[0-9]+)?)(.*?)$')
         self.z_regex_multiline = re.compile(rb'^(G0?[0123].*?Z)([-0-9]*(\.[0-9]+)?)(.*?)$')
         self.filtered_lines = set()
+
+        if self.model == "m1":
+            self.material_height_zero_z = 17.0 # Actual Z coordinate for a material thickness of 0
+            self.lowest_z_height = 35.0 # This is to prevent crashing the blade into the bed
+
+            self.START_GCODE = dedent_bytes(b"""
+            ;XTM1_HEADER_START;
+            ; Set default speed for G0 and G1
+            G1 F9600
+            G0 F9600
+            ; Disable all periphery (except air purifyer)
+            M19 S1
+            ; Disable ranging laser pointer
+            M18 S0
+
+            ; Pause before start
+            G4 P0.1
+
+            ; Move to work area
+            G0 Y30
+            ; Activate laser module and set power to 0
+            M4 S0
+            ; Don't know what this does
+            M104 X0
+            ;XTM1_HEADER_END;
+
+            """)
+
+            self.END_GCODE = dedent_bytes(b"""
+
+            ;XTM1_FOOTER_START;
+            ; Move head to origin
+            G0 Z0 F3000
+            G0 X0 Y0 F9600
+
+            ; Small pause
+            G4 P0.1
+            ; Disable laser module
+            M05
+            ; Stop gcode
+            M6 P1
+            ;XTM1_FOOTER_END;
+            """)
+
+        if self.model == "m1_ultra":
+            self.material_height_zero_z = 16.0 # Actual Z coordinate for a material thickness of 0
+            self.lowest_z_height = 28.6 # This is to prevent crashing the blade into the bed
+
+            self.START_GCODE = dedent_bytes(b"""
+            # M1 LITE HEAD
+            G0 F9600
+            M4 S0
+            M19 S1
+            M18 S0
+            G90
+            G0 Z0
+                                            
+            """)
+
+            self.END_GCODE = dedent_bytes(b"""
+            # M1 LITE TAIL
+            G90
+
+            G0 S0
+            M3 S0
+            G0 F10000
+            G1 F10000
+            G0 Z0
+            G0 U0
+            G0 W0
+            G0 X0 Y0
+            G4 P0.1
+            M109 S0
+            M6
+
+            """)
 
     @staticmethod
     def s_replace(match):
@@ -298,7 +343,11 @@ class GcodeTranslator():
             self.process_line(line) 
             for line in gcode.split(b'\n')
         ]
-        return self.START_GCODE + b'\n'.join(new_lines) + self.END_GCODE
+       
+        if self.model == "m1":
+            return self.START_GCODE + b'\n'.join(new_lines) + self.END_GCODE
+        if self.model == "m1_ultra":
+            return self.START_GCODE + str.encode(f"G0Z{self.force_material_thickness}\n") + b'\n'.join(new_lines) + self.END_GCODE
 
     def translate_file(self, filename: str) -> str:
         parts = filename.split('.')

@@ -1,13 +1,14 @@
-# xTool M1 Toolkit
+# xTool M1 and M1 Ultra Toolkit
 
-This project contains tools to control the xTool M1 laser cutter / blade cutter.
+This project contains tools to control the xTool M1 and M1 Ultra laser cutter / blade cutter.
 The initial aim is to use LightBurn for laser cutting with the M1, so the current focus is on laser cutting only, not blade cutting.
 
 > ***This is an unofficial project. It is not affiliated with xTool or LightBurn. It might break your machine. No warranties, use at your own risk.***
 
 ## m1control.py
+Configure your device by changing the follwing line `m1 = XTM1('192.168.2.219',"m1")` to match your IP and model. 
 
-This script can send commands and upload G-code files to the xTool M1.
+This script can send commands and upload G-code files to the xTool M1 and M1 Ultra.
 Currently supported commands are:
 
 ```
@@ -60,3 +61,14 @@ The resulting program `tcp_bridge` can then be given rights for the specific ope
 ## xtm1.py
 
 This library contains the code to communicate with the xTool M1, as well as some machine-specific G-code filters.
+
+## Lightburn Settings
+
+### M1
+
+### M1 Ultra
+Controller: GBRL
+Connect: Serial/USB
+X and Y Axis Length: 300mm
+Origin of Laser: Rear Left
+Auto home: off
