@@ -67,8 +67,8 @@ This library contains the code to communicate with the xTool M1, as well as some
 ### M1
 
 ### M1 Ultra
-Controller: GBRL
-Connect: Serial/USB
-X and Y Axis Length: 300mm
-Origin of Laser: Rear Left
-Auto home: off
+- Controller: GBRL
+- Connect: Serial/USB
+- X and Y Axis Length: 300mm
+- Origin of Laser: Rear Left
+- Auto home: off
